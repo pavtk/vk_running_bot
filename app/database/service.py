@@ -20,8 +20,6 @@ def get_or_create_user(user_id, first_name, last_name, age, sex, city_id):
         first_name: имя
         last_name: фамилия
         age: возраст (может быть None если скрыт в профиле)
-        sex: пол (1 — женский, 2 — мужской)
-        city_id: город (может быть None если не указан)
 
     Returns:
         User: объект пользователя из БД
@@ -34,8 +32,6 @@ def get_or_create_user(user_id, first_name, last_name, age, sex, city_id):
                 first_name=first_name,
                 last_name=last_name,
                 age=age,
-                sex=sex,
-                city_id=city_id,
             )
             session.add(user)
             session.commit()
