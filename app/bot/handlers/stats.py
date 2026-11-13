@@ -28,6 +28,9 @@ from app.bot.state_storage import delete_user_state, get_user_state, set_user_st
 from app.bot.utils import require_private_message
 
 
+MAX_REPORT_MESSAGE_LENGTH = 4000
+
+
 @stats_labeler.message(text="/event_report")
 async def start_general_event_report(message: Message):
     """Сводный отчёт по мероприятию и категории с разбивкой по видам спорта."""
@@ -198,6 +201,44 @@ def _format_general_report_table(participants: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _split_general_report_messages(
+    header: str,
+    report_body: str,
+    max_length: int = MAX_REPORT_MESSAGE_LENGTH,
+) -> list[str]:
+    part_marker_reserve = len("\n[Часть 999999 из 999999]")
+    body_limit = max_length - len(header) - 2 - part_marker_reserve
+    if body_limit <= 0:
+        raise ValueError("The report header exceeds the maximum message length.")
+
+    lines = report_body.splitlines() or [""]
+    body_parts: list[list[str]] = [[]]
+    current_length = 0
+
+    for line in lines:
+        fragments = [
+            line[index:index + body_limit]
+            for index in range(0, len(line), body_limit)
+        ] or [""]
+        for fragment in fragments:
+            added_length = len(fragment) + (1 if body_parts[-1] else 0)
+            if body_parts[-1] and current_length + added_length > body_limit:
+                body_parts.append([])
+                current_length = 0
+                added_length = len(fragment)
+            body_parts[-1].append(fragment)
+            current_length += added_length
+
+    part_count = len(body_parts)
+    messages = []
+    for part_number, body_lines in enumerate(body_parts, start=1):
+        body = "\n".join(body_lines)
+        marker = f"\n[Часть {part_number} из {part_count}]"
+        messages.append(f"{header}\n\n{body}{marker}")
+
+    return messages
+
+
 def _general_event_report_query(event_id: int, category_id: int):
     return (
         select(
@@ -285,12 +326,12 @@ async def _render_general_event_report(message: Message, event_id: int, category
         report_table = "Участников нет."
 
     await state_dispenser.delete(message.peer_id)
-    await message.answer(
+    header = (
         f"📊 Общий отчёт по событию: {event.title}\n"
-        f"Категория: {category.title} (все виды спорта)\n\n"
-        + report_table,
-        disable_mentions=True,
+        f"Категория: {category.title} (все виды спорта)"
     )
+    for report_part in _split_general_report_messages(header, report_table):
+        await message.answer(report_part, disable_mentions=True)
 
 
 @stats_labeler.message(text="/stats")

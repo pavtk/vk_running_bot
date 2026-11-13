@@ -14,6 +14,7 @@ from app.bot.handlers.stats import (
     _aggregate_general_report_rows,
     _format_general_report_table,
     _general_event_report_query,
+    _split_general_report_messages,
     start_general_event_report,
 )
 from app.database.models import (
@@ -82,6 +83,50 @@ def test_general_report_table_shows_each_participant_training_count_and_sports()
     assert table == "1. Участник, 4 трен., Бег: 7.00 км, Велосипед: 24.50 км"
     assert "Всего тренировок" not in table
     assert "Километраж по видам спорта:" not in table
+
+
+def test_general_report_is_split_under_message_limit_without_losing_rows():
+    rows = [
+        f"{index}. Участник {index}, 4 трен., Бег: 7.00 км"
+        for index in range(1, 21)
+    ]
+
+    messages = _split_general_report_messages(
+        "Отчёт по событию\nКатегория: Профи",
+        "\n".join(rows),
+        max_length=200,
+    )
+
+    assert len(messages) > 1
+    assert all(len(message) <= 200 for message in messages)
+    assert [
+        message.split("\n[Часть ")[-1] for message in messages
+    ] == [
+        f"{index} из {len(messages)}]"
+        for index in range(1, len(messages) + 1)
+    ]
+    assert [
+        line
+        for message in messages
+        for line in message.split("\n\n", 1)[1]
+        .split("\n[Часть ", 1)[0]
+        .splitlines()
+    ] == rows
+
+
+def test_general_report_splits_a_single_oversized_row():
+    message_parts = _split_general_report_messages(
+        "Отчёт",
+        "x" * 100,
+        max_length=80,
+    )
+
+    assert len(message_parts) > 1
+    assert all(len(message) <= 80 for message in message_parts)
+    assert sum(
+        len(message.split("\n\n", 1)[1].split("\n[Часть ", 1)[0])
+        for message in message_parts
+    ) == 100
 
 
 def test_general_event_report_query_groups_historic_reports_by_sport():
