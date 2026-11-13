@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
@@ -29,6 +29,12 @@ from app.bot.utils import require_private_message
 
 
 MAX_REPORT_MESSAGE_LENGTH = 4000
+SPORT_SCORE_FACTORS = {
+    "бег": Decimal("1"),
+    "велосипед": Decimal("0.5"),
+    "лыжи": Decimal("0.8"),
+    "скандинавская ходьба": Decimal("1.33"),
+}
 
 
 @stats_labeler.message(text="/event_report")
@@ -194,11 +200,30 @@ def _format_general_report_table(participants: list[dict]) -> str:
                 participant["distance_by_sport"].items()
             )
         ) or "—"
+        score = _calculate_general_report_score(
+            participant["distance_by_sport"]
+        )
         lines.append(
             f"{index}. {participant['name']}, "
-            f"{participant['training_count']} трен., {sports}"
+            f"{participant['training_count']} трен., {sports}, "
+            f"{score:.2f} баллов"
         )
     return "\n".join(lines)
+
+
+def _calculate_general_report_score(
+    distance_by_sport: dict[str, Decimal],
+) -> Decimal:
+    score = sum(
+        (
+            distance
+            * SPORT_SCORE_FACTORS[sport.strip().casefold()]
+            for sport, distance in distance_by_sport.items()
+            if sport.strip().casefold() in SPORT_SCORE_FACTORS
+        ),
+        Decimal("0"),
+    )
+    return score.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
 def _split_general_report_messages(

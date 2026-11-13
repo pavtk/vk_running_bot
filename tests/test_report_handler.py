@@ -12,6 +12,7 @@ from app.bot.handlers.report import parse_report_distance
 from app.bot.handlers.states import ReportState
 from app.bot.handlers.stats import (
     _aggregate_general_report_rows,
+    _calculate_general_report_score,
     _format_general_report_table,
     _general_event_report_query,
     _split_general_report_messages,
@@ -80,9 +81,29 @@ def test_general_report_table_shows_each_participant_training_count_and_sports()
         ]
     )
 
-    assert table == "1. Участник, 4 трен., Бег: 7.00 км, Велосипед: 24.50 км"
+    assert table == (
+        "1. Участник, 4 трен., Бег: 7.00 км, Велосипед: 24.50 км, "
+        "19.25 баллов"
+    )
     assert "Всего тренировок" not in table
     assert "Километраж по видам спорта:" not in table
+
+
+def test_general_report_score_uses_sport_factors_and_rounds_half_up():
+    score = _calculate_general_report_score(
+        {
+            "Бег": Decimal("7.00"),
+            "Велосипед": Decimal("24.50"),
+            "Лыжи": Decimal("10.00"),
+            "Скандинавская ходьба": Decimal("3.00"),
+            "Плавание": Decimal("100.00"),
+        }
+    )
+
+    assert score == Decimal("31.24")
+    assert _calculate_general_report_score(
+        {"Велосипед": Decimal("0.01")}
+    ) == Decimal("0.01")
 
 
 def test_general_report_is_split_under_message_limit_without_losing_rows():
