@@ -1,0 +1,21 @@
+# pyproject.toml
+[project]
+name = "vk-running-bot"
+version = "0.1.0"
+requires-python = ">=3.9"
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.4,<9",
+    "pytest-asyncio>=0.21,<2",
+]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "strict"

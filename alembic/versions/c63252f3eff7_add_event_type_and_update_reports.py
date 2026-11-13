@@ -45,10 +45,32 @@ def upgrade() -> None:
                existing_type=sa.NUMERIC(precision=6, scale=2),
                comment='Для event_type=runs_per_week — минимальная дистанция категории; для event_type=distance — целевая дистанция категории.',
                existing_nullable=False)
-    op.add_column('events', sa.Column('event_type', event_type_enum, nullable=False))
+    op.add_column(
+        'events',
+        sa.Column(
+            'event_type',
+            event_type_enum,
+            server_default='distance',
+            nullable=False,
+        ),
+    )
+    op.alter_column(
+        'events',
+        'event_type',
+        existing_type=event_type_enum,
+        existing_nullable=False,
+        server_default=None,
+    )
     op.add_column('events', sa.Column('runs_per_week', sa.Integer(), nullable=True))
     op.create_index(op.f('ix_registrations_event_id'), 'registrations', ['event_id'], unique=False)
-    op.create_foreign_key(None, 'registrations', 'events', ['event_id'], ['id'], ondelete='CASCADE')
+    op.create_foreign_key(
+        'fk_registrations_event',
+        'registrations',
+        'events',
+        ['event_id'],
+        ['id'],
+        ondelete='CASCADE',
+    )
     op.drop_column('registrations', 'registered_at')
     # ### end Alembic commands ###
 
@@ -60,7 +82,7 @@ def downgrade() -> None:
     # WARNING: constraint name is None; this directive will fail as
     # rendered.  Add a name, or use a naming convention; see
     # https://alembic.sqlalchemy.org/en/latest/naming.html
-    op.drop_constraint(None, 'registrations', type_='foreignkey')
+    op.drop_constraint('fk_registrations_event', 'registrations', type_='foreignkey')
     op.drop_index(op.f('ix_registrations_event_id'), table_name='registrations')
     op.drop_column('events', 'runs_per_week')
     op.drop_column('events', 'event_type')

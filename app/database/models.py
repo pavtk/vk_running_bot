@@ -108,7 +108,9 @@ class Event(Base):
     )
 
     registrations: Mapped[list['Registration']] = relationship(
-        back_populates='event', cascade='all, delete'
+        back_populates='event',
+        cascade='all, delete',
+        overlaps='event_category, registrations',
     )
     event_categories: Mapped[list["EventCategory"]] = relationship(
         back_populates='event', cascade='all, delete-orphan'
@@ -161,7 +163,10 @@ class EventCategory(Base):
     )
 
     registrations: Mapped[list["Registration"]] = relationship(
-        back_populates='event_category', cascade='all, delete'
+        back_populates='event_category',
+        cascade='all, delete',
+        foreign_keys='Registration.event_category_id',
+        overlaps='event, registrations',
     )
     event: Mapped['Event'] = relationship(back_populates='event_categories')
     category: Mapped['Category'] = relationship(
@@ -195,11 +200,21 @@ class Registration(Base):
         nullable=False,
         index=True,
     )
-    event_category_id: Mapped[int] = mapped_column(Integer, index=True)
+    event_category_id: Mapped[int] = mapped_column(
+        ForeignKey("event_categories.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
     user: Mapped["User"] = relationship(back_populates="registrations")
-    event: Mapped["Event"] = relationship(back_populates="registrations")
+    event: Mapped["Event"] = relationship(
+        back_populates="registrations",
+        foreign_keys='Registration.event_id',
+        overlaps='event_category, registrations'
+    )
     event_category: Mapped["EventCategory"] = relationship(
-        back_populates="registrations"
+        back_populates="registrations",
+        foreign_keys='Registration.event_category_id',
+        overlaps='event, registrations'
     )
     reports: Mapped[list["Report"]] = relationship(
         back_populates="registration",
@@ -215,7 +230,7 @@ class Report(Base):
         ),
         CheckConstraint(
             'distance_km > 0',
-            name='check_event_category_distance_positive'
+            name='check_report_distance_positive'
         )
     )
     registration_id: Mapped[int] = mapped_column(
