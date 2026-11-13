@@ -12,10 +12,18 @@ class EventCreateState(BaseStateGroup):
     WAITING_REGISTRATION_OPEN = "waiting_registration_open"
     WAITING_ADD_CATEGORY = "waiting_add_category"
     WAITING_CATEGORY_SELECT = "waiting_category_select"
-    WAITING_CATEGORY_DISTANCE = "waiting_category_distance"
+
+
+class CatalogState(BaseStateGroup):
+    WAITING_ACTION = "waiting_catalog_action"
+    WAITING_CATEGORY_TITLE = "waiting_catalog_category_title"
+    WAITING_SPORT_TITLE = "waiting_catalog_sport_title"
+    WAITING_DISTANCE_PAIR = "waiting_catalog_distance_pair"
+    WAITING_DISTANCE_VALUE = "waiting_catalog_distance_value"
 
 class RegistrationState(BaseStateGroup):
     WAITING_EVENT = 'wating_event'
+    WAITING_SPORT = 'waiting_sport'
     WAITING_CATEGORY = 'waiting_category'
 
 

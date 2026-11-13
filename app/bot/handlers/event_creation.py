@@ -1,13 +1,17 @@
 from datetime import date, datetime
-from decimal import Decimal, InvalidOperation
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
-from vkbottle.bot import Message, BotLabeler
+from sqlalchemy.orm import selectinload
+from vkbottle.bot import Message
 
 from app.logger import logger
 from app.bot.handlers.states import EventCreateState
-from app.database.models import Category, Event, EventCategory
+from app.database.models import (
+    CategorySportDistance,
+    Event,
+    EventCategory,
+)
 from app.service import get_or_create_user
 from app.database.service import EventType, Session
 from app.bot.utils import _get_state_payload, _text, require_private_message
@@ -35,6 +39,24 @@ async def start_create_event(message: Message):
 
     if not user.is_admin:
         await message.answer("❌ Эта команда доступна только администраторам.")
+        return
+
+    try:
+        async with Session() as session:
+            has_configured_distances = await session.scalar(
+                select(CategorySportDistance.id).where(
+                    CategorySportDistance.distance_km.is_not(None)
+                ).limit(1)
+            )
+    except Exception:
+        logger.exception("Failed to check configured category/sport distances")
+        await message.answer("❌ Не удалось проверить справочник. Попробуй позже.")
+        return
+    if has_configured_distances is None:
+        await message.answer(
+            "⚠️ Сначала настрой категории, виды спорта и их дистанции командой "
+            "/catalog."
+        )
         return
 
     # Защита от повторного входа в активное состояние
@@ -135,7 +157,7 @@ async def process_end_date(message: Message):
     )
     await message.answer(
         "🎯 Выбери тип события:\n"
-        "1) Пробежки в неделю (runs_per_week)\n"
+        "1) Тренировки в неделю\n"
         "2) Дистанция (distance)"
     )
 
@@ -147,7 +169,7 @@ async def process_event_type(message: Message):
     if event_type is None:
         await message.answer(
             "⚠️ Пожалуйста, выбери 1 или 2:\n"
-            "1) Пробежки в неделю\n"
+            "1) Тренировки в неделю\n"
             "2) Дистанция"
         )
         return
@@ -162,7 +184,7 @@ async def process_event_type(message: Message):
             event_type=event_type.value,
         )
         await message.answer(
-            "🏃 Сколько пробежек в неделю нужно сделать?\n"
+            "🏃 Сколько тренировок в неделю нужно сделать?\n"
             "(введи число больше 0):"
         )
     else:
@@ -233,7 +255,7 @@ async def process_registration_open(message: Message):
 
     runs_per_week = payload.get("runs_per_week")
     if event_type == EventType.RUNS_PER_WEEK and not runs_per_week:
-        await message.answer("❌ Не задано число пробежек. Начни заново: /create_event")
+        await message.answer("❌ Не задано число тренировок. Начни заново: /create_event")
         await state_dispenser.delete(message.peer_id)
         return
 
@@ -277,10 +299,10 @@ async def process_registration_open(message: Message):
 
     await message.answer(
         f"✅ Событие '{title}' создано (ID: {event_id})!\n\n"
-        f"Теперь нужно добавить хотя бы одну категорию для этого события.\n"
-        f"Добавить категорию?\n"
-        f"1) Да\n"
-        f"2) Нет (завершить создание)"
+        "Теперь добавь к событию доступные сочетания категории и вида спорта.\n"
+        "Добавить сочетание?\n"
+        "1) Да\n"
+        "2) Нет (завершить создание)"
     )
 
 
@@ -302,29 +324,63 @@ async def process_add_category_choice(message: Message):
         return
 
     if text == "2":
+        if not payload.get("added_categories"):
+            await message.answer(
+                "⚠️ Добавь к событию хотя бы одно сочетание вида спорта и "
+                "категории. Введи 1, чтобы выбрать его."
+            )
+            return
         await finish_event_creation(message, payload)
         return
+
+    added_categories = payload.get("added_categories") or []
+    added_pairs = {
+        (item["category_id"], item["sport_id"])
+        for item in added_categories
+    }
 
     try:
         async with Session() as session:
-            result = await session.execute(select(Category).order_by(Category.id))
-            categories = result.scalars().all()
+            result = await session.execute(
+                select(CategorySportDistance)
+                .options(
+                    selectinload(CategorySportDistance.category),
+                    selectinload(CategorySportDistance.sport),
+                )
+                .where(CategorySportDistance.distance_km.is_not(None))
+                .order_by(CategorySportDistance.category_id, CategorySportDistance.sport_id)
+            )
+            distances = [
+                item for item in result.scalars().all()
+                if (item.category_id, item.sport_id) not in added_pairs
+            ]
     except Exception:
-        logger.exception("Failed to load categories")
-        await message.answer("❌ Не удалось загрузить категории. Попробуй позже.")
+        logger.exception("Failed to load configured category/sport distances")
+        await message.answer("❌ Не удалось загрузить варианты. Попробуй позже.")
         return
 
-    if not categories:
+    if not distances:
         await message.answer(
-            "⚠️ В базе нет ни одной категории. "
-            "Сначала создай категории, а потом возвращайся к событию."
+            "⚠️ Нет доступных сочетаний. Настрой новые категории и виды спорта "
+            "командой /catalog."
         )
-        await finish_event_creation(message, payload)
         return
 
-    categories_data = [{"id": c.id, "title": c.title} for c in categories]
+    categories_data = [
+        {
+            "category_id": item.category_id,
+            "category_title": item.category.title,
+            "sport_id": item.sport_id,
+            "sport_title": item.sport.title,
+            "distance_km": str(item.distance_km),
+        }
+        for item in distances
+    ]
     categories_list = "\n".join(
-        f"{i+1}) {c['title']}" for i, c in enumerate(categories_data))
+        f"{i+1}) {c['sport_title']} — {c['category_title']} "
+        f"({c['distance_km']} км)"
+        for i, c in enumerate(categories_data)
+    )
 
     await state_dispenser.set(
         message.peer_id,
@@ -333,8 +389,8 @@ async def process_add_category_choice(message: Message):
         categories_list=categories_data,
     )
     await message.answer(
-        f"📂 Выбери категорию:\n{categories_list}\n\n"
-        f"Введи номер категории:"
+        f"📂 Выбери сочетание:\n{categories_list}\n\n"
+        f"Введи его номер:"
     )
 
 
@@ -356,96 +412,78 @@ async def process_category_select(message: Message):
         return
 
     selected = categories_data[idx]
-    await state_dispenser.set(
-        message.peer_id,
-        EventCreateState.WAITING_CATEGORY_DISTANCE,
-        **payload,
-        selected_category_id=selected["id"],
-        selected_category_title=selected["title"],
-    )
-
-    event_type = payload.get("event_type")
-    distance_hint = (
-        "минимальную"
-        if event_type == EventType.RUNS_PER_WEEK.value
-        else "целевую"
-    )
-    await message.answer(
-        f"📏 Введи {distance_hint} дистанцию для категории "
-        f"'{selected['title']}' (в км, например: 5, 10.5, 42.195):"
-    )
-
-
-@event_creation_labeler.message(state=EventCreateState.WAITING_CATEGORY_DISTANCE)
-async def process_category_distance(message: Message):
-    payload = await _get_state_payload(message)
-
     event_id = payload.get("event_id")
-    category_id = payload.get("selected_category_id")
-    category_title = payload.get("selected_category_title")
-    if event_id is None or category_id is None or category_title is None:
-        await message.answer("❌ Потеряны данные. Начни заново: /create_event")
+    if event_id is None:
+        await message.answer("❌ Потеряны данные события. Начни заново: /create_event")
         await state_dispenser.delete(message.peer_id)
-        return
-
-    text = _text(message).replace(",", ".")
-    try:
-        distance_km = Decimal(text)
-        if distance_km <= 0:
-            raise ValueError
-        if distance_km > Decimal("9999.99"):
-            raise ValueError
-    except (InvalidOperation, ValueError):
-        await message.answer(
-            "⚠️ Введи положительное число (например: 5, 10.5, 42.195):"
-        )
         return
 
     try:
         async with Session() as session:
-            session.add(EventCategory(
-                event_id=event_id,
-                category_id=category_id,
-                distance_km=distance_km,
-            ))
+            configured_distance = await session.scalar(
+                select(CategorySportDistance).where(
+                    CategorySportDistance.category_id == selected["category_id"],
+                    CategorySportDistance.sport_id == selected["sport_id"],
+                    CategorySportDistance.distance_km.is_not(None),
+                )
+            )
+            if (
+                configured_distance is None
+                or configured_distance.distance_km is None
+            ):
+                await message.answer(
+                    "⚠️ Эта дистанция больше не настроена. Выбери другой вариант."
+                )
+                return
+            distance_km = configured_distance.distance_km
+            session.add(
+                EventCategory(
+                    event_id=event_id,
+                    category_id=selected["category_id"],
+                    sport_id=selected["sport_id"],
+                    distance_km=distance_km,
+                )
+            )
             await session.commit()
     except IntegrityError:
-        # Категория уже привязана — возвращаемся к выбору
+        # This category/sport pair is already attached to the event.
         categories_data = payload.get("categories_list") or []
         if not categories_data:
             await message.answer("❌ Список категорий потерян. Начни заново: /create_event")
             await state_dispenser.delete(message.peer_id)
             return
         categories_list = "\n".join(
-            f"{i+1}) {c['title']}" for i, c in enumerate(categories_data)
+            f"{i+1}) {c['sport_title']} — {c['category_title']} "
+            f"({c['distance_km']} км)"
+            for i, c in enumerate(categories_data)
         )
-        # сбрасываем выбранную категорию, чтобы можно было выбрать другую
-        for key in ("selected_category_id", "selected_category_title"):
-            payload.pop(key, None)
         await state_dispenser.set(
             message.peer_id,
             EventCreateState.WAITING_CATEGORY_SELECT,
             **payload,
         )
         await message.answer(
-            "⚠️ Эта категория уже добавлена к данному событию.\n\n"
-            f"📂 Выбери другую категорию:\n{categories_list}"
+            "⚠️ Это сочетание уже добавлено к событию.\n\n"
+            f"📂 Выбери другое сочетание:\n{categories_list}"
         )
         return
     except Exception:
-        logger.exception("Error saving event category")
+        logger.exception("Error saving event category/sport")
         await message.answer("❌ Ошибка при сохранении. Попробуй снова.")
         return
 
     # Успех — обновляем payload
+    selected["distance_km"] = str(distance_km)
     added_categories = list(payload.get("added_categories") or [])
     added_categories.append({
-        "title": category_title,
-        "distance_km": str(distance_km),
+        "category_id": selected["category_id"],
+        "sport_id": selected["sport_id"],
+        "category_title": selected["category_title"],
+        "sport_title": selected["sport_title"],
+        "distance_km": selected["distance_km"],
     })
     payload["added_categories"] = added_categories
-    for key in ("categories_list", "selected_category_id", "selected_category_title"):
-        payload.pop(key, None)
+    payload.pop("categories_list", None)
 
     await state_dispenser.set(
         message.peer_id,
@@ -454,8 +492,10 @@ async def process_category_distance(message: Message):
     )
 
     await message.answer(
-        f"✅ Категория '{category_title}' с дистанцией {distance_km} км добавлена!\n\n"
-        f"Добавить ещё категорию?\n"
+        f"✅ Сочетание «{selected['sport_title']} — "
+        f"{selected['category_title']}» с дистанцией "
+        f"{selected['distance_km']} км добавлено!\n\n"
+        f"Добавить ещё сочетание?\n"
         f"1) Да\n"
         f"2) Нет (завершить)"
     )
@@ -473,19 +513,20 @@ async def finish_event_creation(message: Message, payload: dict):
         await message.answer("⚠️ Не удалось восстановить данные события.")
         return
 
-    type_text = "Пробежки в неделю" if event_type == EventType.RUNS_PER_WEEK else "Дистанция"
+    type_text = "Тренировки в неделю" if event_type == EventType.RUNS_PER_WEEK else "Дистанция"
     runs_text = (
-        f"\n• Пробежек в неделю: {payload['runs_per_week']}"
+        f"\n• Тренировок в неделю: {payload['runs_per_week']}"
         if payload.get("runs_per_week") else ""
     )
 
     added_categories = payload.get("added_categories") or []
     if added_categories:
-        categories_text = "\n\n📂 Категории:\n• " + "\n• ".join(
-            f"{c['title']} — {c['distance_km']} км" for c in added_categories
+        categories_text = "\n\n📂 Виды спорта и категории:\n• " + "\n• ".join(
+            f"{c['sport_title']} — {c['category_title']} "
+            f"({c['distance_km']} км)" for c in added_categories
         )
     else:
-        categories_text = "\n\n⚠️ Категории не добавлены"
+        categories_text = "\n\n⚠️ Сочетания категорий и видов спорта не добавлены"
 
     await message.answer(
         f"🎉 Создание события завершено!\n\n"

@@ -62,7 +62,9 @@ async def get_registration_events(session: AsyncSession) -> list[Event]:
         select(Event)
         .options(
             selectinload(Event.event_categories).selectinload(
-                EventCategory.category)
+                EventCategory.category),
+            selectinload(Event.event_categories).selectinload(
+                EventCategory.sport)
         )
         .where(
             Event.registration_open == True,
@@ -80,7 +82,9 @@ async def get_active_events(session: AsyncSession) -> list[Event]:
         select(Event)
         .options(
             selectinload(Event.event_categories).selectinload(
-                EventCategory.category)
+                EventCategory.category),
+            selectinload(Event.event_categories).selectinload(
+                EventCategory.sport)
         )
         .where(
             or_(

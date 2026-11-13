@@ -18,6 +18,7 @@ async def _send_my_registrations(message_or_event, user_id: int):
             .options(
                 selectinload(Registration.event),
                 selectinload(Registration.event_category).selectinload(EventCategory.category),
+                selectinload(Registration.event_category).selectinload(EventCategory.sport),
             )
             .where(Registration.user_id == user_id)
             .order_by(Registration.id.desc())
@@ -39,10 +40,21 @@ async def _send_my_registrations(message_or_event, user_id: int):
                 if reg.event_category is not None and reg.event_category.category is not None
                 else "—"
             )
+            sport_title = (
+                reg.event_category.sport.title
+                if reg.event_category is not None and reg.event_category.sport is not None
+                else "—"
+            )
+            distance_text = (
+                f" — {reg.event_category.distance_km} км"
+                if reg.event_category is not None
+                else ""
+            )
             lines.append(
                 f"🏁 {reg.event.title}\n"
                 f"   🕒 {starts} — {ends}\n"
-                f"   📌 {category_title}\n"
+                f"   🏅 {sport_title}\n"
+                f"   📌 {category_title}{distance_text}\n"
             )
         text = "\n".join(lines)
 

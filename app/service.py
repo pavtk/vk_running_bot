@@ -22,7 +22,8 @@ def serialize_event(event: Event) -> dict:
         'event_categories': [
             {
                 'id': ec.id,
-                'title': ec.category.title,
+                'category_title': ec.category.title,
+                'sport_title': ec.sport.title,
                 'distance_km': ec.distance_km,
             }
             for ec in event.event_categories

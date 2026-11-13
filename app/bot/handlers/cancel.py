@@ -1,6 +1,7 @@
 from vkbottle.bot import BotLabeler, Message
 
 from app.bot.handlers.states import (
+    CatalogState,
     EventCreateState,
     GeneralReportState,
     RegistrationState,
@@ -22,8 +23,13 @@ cancel_labeler = BotLabeler()
     EventCreateState.WAITING_REGISTRATION_OPEN,
     EventCreateState.WAITING_ADD_CATEGORY,
     EventCreateState.WAITING_CATEGORY_SELECT,
-    EventCreateState.WAITING_CATEGORY_DISTANCE,
+    CatalogState.WAITING_ACTION,
+    CatalogState.WAITING_CATEGORY_TITLE,
+    CatalogState.WAITING_SPORT_TITLE,
+    CatalogState.WAITING_DISTANCE_PAIR,
+    CatalogState.WAITING_DISTANCE_VALUE,
     RegistrationState.WAITING_EVENT,
+    RegistrationState.WAITING_SPORT,
     RegistrationState.WAITING_CATEGORY,
     StatsState.WAITING_EVENT,
     GeneralReportState.WAITING_EVENT,

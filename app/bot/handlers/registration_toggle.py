@@ -25,6 +25,16 @@ async def close_registration(message: Message):
     await _show_registration_events(message, registration_open=False)
 
 
+@event_management_labeler.message(text="/sport_change_open")
+async def open_sport_change(message: Message):
+    await _show_sport_change_events(message, sport_change_open=True)
+
+
+@event_management_labeler.message(text="/sport_change_close")
+async def close_sport_change(message: Message):
+    await _show_sport_change_events(message, sport_change_open=False)
+
+
 async def _show_registration_events(message: Message, registration_open: bool):
     if not await require_private_message(message):
         return
@@ -78,6 +88,64 @@ async def _show_registration_events(message: Message, registration_open: bool):
     )
 
 
+async def _show_sport_change_events(message: Message, sport_change_open: bool):
+    if not await require_private_message(message):
+        return
+
+    try:
+        user = await get_or_create_user(message.ctx_api, message.from_id)
+    except Exception:
+        logger.exception("Failed to get user for sport change toggle")
+        await message.answer("❌ Не удалось получить данные пользователя. Попробуй позже.")
+        return
+
+    if not user.is_admin:
+        await message.answer("❌ Эта команда доступна только администраторам.")
+        return
+
+    async with Session() as session:
+        stmt = select(Event).where(
+            Event.sport_change_open.is_(not sport_change_open),
+        )
+        if sport_change_open:
+            stmt = stmt.where(Event.ends_on >= date.today())
+        events = list(
+            (
+                await session.scalars(
+                    stmt.order_by(Event.starts_on.asc(), Event.title.asc())
+                )
+            ).all()
+        )
+
+    if not events:
+        await message.answer(
+            "📭 Нет актуальных мероприятий, для которых можно "
+            f"{'открыть' if sport_change_open else 'закрыть'} смену вида спорта."
+        )
+        return
+
+    keyboard = Keyboard(inline=True)
+    for event_record in events:
+        label = f"{event_record.title[:25]} ({event_record.starts_on:%d.%m.%Y})"[:40]
+        keyboard.add(
+            Callback(
+                label,
+                payload={
+                    "cmd": "toggle_sport_change",
+                    "event_id": event_record.id,
+                    "sport_change_open": sport_change_open,
+                },
+            )
+        )
+        keyboard.row()
+
+    action = "открыть" if sport_change_open else "закрыть"
+    await message.answer(
+        f"Выбери мероприятие, для которого нужно {action} смену вида спорта:",
+        keyboard=keyboard.get_json(),
+    )
+
+
 def _parse_payload(raw_payload) -> dict:
     if isinstance(raw_payload, dict):
         return raw_payload
@@ -96,7 +164,8 @@ async def handle_registration_toggle(event: MessageEvent):
         return
 
     payload = _parse_payload(event.payload)
-    if payload.get("cmd") != "toggle_registration":
+    command = payload.get("cmd")
+    if command not in {"toggle_registration", "toggle_sport_change"}:
         return
 
     try:
@@ -112,8 +181,12 @@ async def handle_registration_toggle(event: MessageEvent):
 
     try:
         event_id = int(payload["event_id"])
-        registration_open = payload["registration_open"]
-        if not isinstance(registration_open, bool):
+        target_open = (
+            payload["registration_open"]
+            if command == "toggle_registration"
+            else payload["sport_change_open"]
+        )
+        if not isinstance(target_open, bool):
             raise ValueError
     except (KeyError, TypeError, ValueError):
         await event.show_snackbar("Некорректные данные мероприятия.")
@@ -128,18 +201,33 @@ async def handle_registration_toggle(event: MessageEvent):
         if event_record is None:
             await event.show_snackbar("Мероприятие не найдено.")
             return
-        if registration_open and event_record.ends_on < date.today():
-            await event.show_snackbar("Нельзя открыть регистрацию на завершившееся мероприятие.")
-            return
-        if event_record.registration_open == registration_open:
-            status = "уже открыта" if registration_open else "уже закрыта"
-            await event.show_snackbar(f"Регистрация {status}.")
-            return
-
-        event_record.registration_open = registration_open
+        if command == "toggle_registration":
+            if target_open and event_record.ends_on < date.today():
+                await event.show_snackbar(
+                    "Нельзя открыть регистрацию на завершившееся мероприятие."
+                )
+                return
+            if event_record.registration_open == target_open:
+                status = "уже открыта" if target_open else "уже закрыта"
+                await event.show_snackbar(f"Регистрация {status}.")
+                return
+            event_record.registration_open = target_open
+            setting_name = "Регистрация"
+        else:
+            if target_open and event_record.ends_on < date.today():
+                await event.show_snackbar(
+                    "Нельзя открыть смену вида спорта для завершившегося мероприятия."
+                )
+                return
+            if event_record.sport_change_open == target_open:
+                status = "уже открыта" if target_open else "уже закрыта"
+                await event.show_snackbar(f"Смена вида спорта {status}.")
+                return
+            event_record.sport_change_open = target_open
+            setting_name = "Смена вида спорта"
         await session.commit()
 
-    status = "открыта" if registration_open else "закрыта"
+    status = "открыта" if target_open else "закрыта"
     await event.send_message(
-        f"✅ Регистрация на мероприятие «{event_record.title}» {status}."
+        f"✅ {setting_name} для мероприятия «{event_record.title}» {status}."
     )

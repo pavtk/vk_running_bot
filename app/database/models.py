@@ -75,11 +75,68 @@ class Category(Base):
 
     title: Mapped[str] = mapped_column(String(30), unique=True, nullable=False)
 
+    sport_distances: Mapped[list["CategorySportDistance"]] = relationship(
+        back_populates="category",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
     event_categories: Mapped[list["EventCategory"]] = relationship(
         back_populates='category',
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
+
+
+class Sport(Base):
+    __tablename__ = "sports"
+
+    title: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
+
+    category_distances: Mapped[list["CategorySportDistance"]] = relationship(
+        back_populates="sport",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    event_categories: Mapped[list["EventCategory"]] = relationship(
+        back_populates="sport",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+
+class CategorySportDistance(Base):
+    __tablename__ = "category_sport_distances"
+    __table_args__ = (
+        UniqueConstraint(
+            "category_id", "sport_id",
+            name="unique_category_sport_distance",
+        ),
+        CheckConstraint(
+            "distance_km IS NULL OR distance_km > 0",
+            name="check_category_sport_distance_positive",
+        ),
+    )
+
+    category_id: Mapped[int] = mapped_column(
+        ForeignKey("categories.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    sport_id: Mapped[int] = mapped_column(
+        ForeignKey("sports.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    distance_km: Mapped[Decimal | None] = mapped_column(
+        Numeric(6, 2),
+        nullable=True,
+        comment="Фиксированная дистанция для категории и вида спорта.",
+    )
+
+    category: Mapped["Category"] = relationship(
+        back_populates="sport_distances"
+    )
+    sport: Mapped["Sport"] = relationship(back_populates="category_distances")
 
 
 class Event(Base):
@@ -106,6 +163,9 @@ class Event(Base):
     registration_open: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False
     )
+    sport_change_open: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
 
     registrations: Mapped[list['Registration']] = relationship(
         back_populates='event',
@@ -129,8 +189,8 @@ class EventCategory(Base):
     __tablename__ = "event_categories"
     __table_args__ = (
         UniqueConstraint(
-            "event_id", "category_id",
-            name="unique_event_category",
+            "event_id", "category_id", "sport_id",
+            name="unique_event_category_sport",
         ),
         # нужно для составного FK из Registration:
         UniqueConstraint(
@@ -157,9 +217,14 @@ class EventCategory(Base):
         Numeric(6, 2),
         nullable=False,
         comment=(
-            'Для event_type=runs_per_week — минимальная дистанция категории; '
-            'для event_type=distance — целевая дистанция категории.'
+            "Снимок дистанции категории и вида спорта на момент добавления "
+            "к событию."
         ),
+    )
+    sport_id: Mapped[int] = mapped_column(
+        ForeignKey("sports.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
     )
 
     registrations: Mapped[list["Registration"]] = relationship(
@@ -172,6 +237,7 @@ class EventCategory(Base):
     category: Mapped['Category'] = relationship(
         back_populates='event_categories'
     )
+    sport: Mapped["Sport"] = relationship(back_populates="event_categories")
 
 
 class Registration(Base):
@@ -235,6 +301,11 @@ class Report(Base):
     )
     registration_id: Mapped[int] = mapped_column(
         ForeignKey('registrations.id', ondelete='CASCADE'),
+        index=True,
+        nullable=False,
+    )
+    sport_id: Mapped[int] = mapped_column(
+        ForeignKey("sports.id", ondelete="RESTRICT"),
         index=True,
         nullable=False,
     )

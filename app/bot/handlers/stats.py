@@ -11,7 +11,15 @@ from vkbottle.tools.formatting import Formatter
 
 from app.bot.handlers.states import GeneralReportState, StatsState, state_dispenser
 from app.bot.labelers import stats_labeler
-from app.database.models import Category, Event, EventCategory, Registration, Report, User
+from app.database.models import (
+    Category,
+    Event,
+    EventCategory,
+    Registration,
+    Report,
+    Sport,
+    User,
+)
 from app.database.service import Session, get_active_events
 from app.service import get_or_create_user
 from app.bot.handlers.stats_utils import group_reports_by_week
@@ -22,7 +30,7 @@ from app.bot.utils import require_private_message
 
 @stats_labeler.message(text="/event_report")
 async def start_general_event_report(message: Message):
-    """Сводный отчёт по участникам выбранного активного мероприятия и категории."""
+    """Сводный отчёт по мероприятию и категории с разбивкой по видам спорта."""
     if not await require_private_message(message):
         return
 
@@ -64,31 +72,43 @@ async def _ask_category_for_general_report(message: Message, event_id: int):
         event = await session.get(
             Event,
             event_id,
-            options=[selectinload(Event.event_categories).selectinload(EventCategory.category)],
+            options=[
+                selectinload(Event.event_categories).selectinload(
+                    EventCategory.category
+                )
+            ],
         )
 
     if event is None:
         await message.answer("❌ Событие не найдено.")
         return
 
-    categories = event.event_categories
+    categories_by_id = {
+        event_category.category_id: event_category.category
+        for event_category in event.event_categories
+    }
+    categories = sorted(
+        categories_by_id.items(),
+        key=lambda item: item[1].title.casefold(),
+    )
     if not categories:
         await message.answer("📭 У этого события нет категорий для отчёта.")
         return
 
     if len(categories) == 1:
-        await _render_general_event_report(message, event.id, categories[0].id)
+        await _render_general_event_report(message, event.id, categories[0][0])
         return
 
-    lines = [f"{i}. {ec.category.title}" for i, ec in enumerate(categories, start=1)]
+    lines = [f"{i}. {category.title}" for i, (_, category) in enumerate(categories, 1)]
     await state_dispenser.set(
         message.peer_id,
         GeneralReportState.WAITING_CATEGORY,
         event_id=event.id,
-        category_ids=[ec.id for ec in categories],
+        category_ids=[category_id for category_id, _ in categories],
     )
     await message.answer(
-        "📊 Выбери категорию для общего отчёта:\n\n" + "\n".join(lines),
+        "📊 Выбери категорию для общего отчёта (все виды спорта):\n\n"
+        + "\n".join(lines),
         disable_mentions=True,
     )
 
@@ -140,69 +160,135 @@ async def process_general_category_choice(message: Message):
     await _render_general_event_report(message, event_id, category_ids[choice - 1])
 
 
+def _aggregate_general_report_rows(
+    rows: list[tuple[int, str, str | None, int, Decimal]],
+) -> dict[int, dict]:
+    participants: dict[int, dict] = {}
+    for user_id, name, sport_title, training_count, total_distance in rows:
+        participant = participants.setdefault(
+            user_id,
+            {
+                "name": name,
+                "training_count": 0,
+                "distance_by_sport": {},
+            },
+        )
+        participant["training_count"] += training_count
+        if sport_title is None:
+            continue
+
+        participant["distance_by_sport"][sport_title] = total_distance
+
+    return participants
+
+
+def _format_general_report_table(participants: list[dict]) -> str:
+    lines = []
+    for index, participant in enumerate(participants, start=1):
+        sports = ", ".join(
+            f"{sport}: {distance:.2f} км"
+            for sport, distance in sorted(
+                participant["distance_by_sport"].items()
+            )
+        ) or "—"
+        lines.append(
+            f"{index}. {participant['name']}, "
+            f"{participant['training_count']} трен., {sports}"
+        )
+    return "\n".join(lines)
+
+
+def _general_event_report_query(event_id: int, category_id: int):
+    return (
+        select(
+            User.id.label("user_id"),
+            User.first_name,
+            User.last_name,
+            Sport.title.label("sport_title"),
+            func.count(Report.id).label("training_count"),
+            func.coalesce(func.sum(Report.distance_km), 0).label("total_distance"),
+        )
+        .select_from(Registration)
+        .join(User, User.id == Registration.user_id)
+        .join(EventCategory, EventCategory.id == Registration.event_category_id)
+        .outerjoin(Report, Report.registration_id == Registration.id)
+        .outerjoin(Sport, Sport.id == Report.sport_id)
+        .where(
+            Registration.event_id == event_id,
+            EventCategory.category_id == category_id,
+        )
+        .group_by(
+            User.id,
+            User.first_name,
+            User.last_name,
+            Sport.title,
+        )
+        .order_by(
+            func.count(Report.id).desc(),
+            func.coalesce(func.sum(Report.distance_km), 0).desc(),
+            User.last_name.asc(),
+            User.first_name.asc(),
+        )
+    )
+
+
 async def _render_general_event_report(message: Message, event_id: int, category_id: int):
     async with Session() as session:
         event = await session.get(
             Event,
             event_id,
-            options=[selectinload(Event.event_categories).selectinload(EventCategory.category)],
         )
-        category = await session.get(
-            EventCategory,
-            category_id,
-            options=[selectinload(EventCategory.category)],
-        )
-
-        stmt = (
-            select(
-                User.first_name,
-                User.last_name,
-                Category.title.label("category_title"),
-                func.count(Report.id).label("training_count"),
-                func.coalesce(func.sum(Report.distance_km), 0).label("total_distance"),
-            )
-            .select_from(Registration)
-            .join(User, User.id == Registration.user_id)
-            .join(EventCategory, EventCategory.id == Registration.event_category_id)
-            .join(Category, Category.id == EventCategory.category_id)
-            .outerjoin(Report, Report.registration_id == Registration.id)
+        category = await session.get(Category, category_id)
+        category_is_in_event = await session.scalar(
+            select(EventCategory.id)
             .where(
-                Registration.event_id == event_id,
-                Registration.event_category_id == category_id,
+                EventCategory.event_id == event_id,
+                EventCategory.category_id == category_id,
             )
-            .group_by(User.id, User.first_name, User.last_name, Category.title)
-            .order_by(
-                func.count(Report.id).desc(),
-                func.coalesce(func.sum(Report.distance_km), 0).desc(),
-                User.last_name.asc(),
-                User.first_name.asc(),
-            )
+            .limit(1)
         )
-        rows = (await session.execute(stmt)).all()
 
-    if event is None or category is None:
+        rows = (
+            await session.execute(
+                _general_event_report_query(event_id, category_id)
+            )
+        ).all()
+
+    if event is None or category is None or category_is_in_event is None:
         await message.answer("❌ Данные события или категории не найдены.")
         return
 
-    if not rows:
-        await message.answer(
-            f"📊 Общий отчёт по событию: {event.title}\nКатегория: {category.category.title}\n\nУчастников нет.",
-            disable_mentions=True,
-        )
-        return
+    participants = _aggregate_general_report_rows(
+        [
+            (
+                row.user_id,
+                f"{row.first_name} {row.last_name}".strip(),
+                row.sport_title,
+                row.training_count or 0,
+                row.total_distance or Decimal("0.00"),
+            )
+            for row in rows
+        ]
+    )
 
-    lines = []
-    for i, row in enumerate(rows, start=1):
-        full_name = f"{row.first_name} {row.last_name}".strip()
-        training_count = row.training_count or 0
-        total_distance = row.total_distance or Decimal("0.00")
-        lines.append(
-            f"{i}. {full_name} — {row.category_title} — {training_count} трен. — {float(total_distance):.2f} км"
-        )
+    ordered_participants = sorted(
+        participants.values(),
+        key=lambda item: (
+            -item["training_count"],
+            -sum(item["distance_by_sport"].values(), Decimal("0.00")),
+            item["name"].casefold(),
+        ),
+    )
+    if ordered_participants:
+        report_table = _format_general_report_table(ordered_participants)
+    else:
+        report_table = "Участников нет."
 
     await state_dispenser.delete(message.peer_id)
     await message.answer(
-        f"📊 Общий отчёт по событию: {event.title}\nКатегория: {category.category.title}\n\n" + "\n".join(lines),
+        f"📊 Общий отчёт по событию: {event.title}\n"
+        f"Категория: {category.title} (все виды спорта)\n\n"
+        + report_table,
         disable_mentions=True,
     )
 
@@ -325,17 +411,27 @@ async def send_event_stats(message: Message, reg_id: int):
         report_timezone=report_timezone,
     )
     lines = []
-    for week_number, total, run_count in weekly:
-        if run_count % 10 == 1 and run_count % 100 != 11:
-            run_word = "пробежка"
-        elif run_count % 10 in {2, 3, 4} and run_count % 100 not in {12, 13, 14}:
-            run_word = "пробежки"
+    for week_number, total, training_count in weekly:
+        if training_count % 10 == 1 and training_count % 100 != 11:
+            training_word = "тренировка"
+        elif (
+            training_count % 10 in {2, 3, 4}
+            and training_count % 100 not in {12, 13, 14}
+        ):
+            training_word = "тренировки"
         else:
-            run_word = "пробежек"
-        line = f"• {week_number} неделя: {run_count} {run_word}, {total} км"
+            training_word = "тренировок"
+        line = (
+            f"• {week_number} неделя: {training_count} {training_word}, "
+            f"{total} км"
+        )
         if runs_per_week and runs_per_week > 0:
-            goal_status = "выполнена" if run_count >= runs_per_week else "не выполнена"
-            line += f" (цель {run_count}/{runs_per_week}, {goal_status})"
+            goal_status = (
+                "выполнена"
+                if training_count >= runs_per_week
+                else "не выполнена"
+            )
+            line += f" (цель {training_count}/{runs_per_week}, {goal_status})"
         lines.append(line)
 
     await message.answer(Formatter("📊 {:bold}\n\n{}").format(event_title, "\n".join(lines)))

@@ -33,14 +33,15 @@ async def show_active_events(message: Message):
 
         categories = event.get("event_categories") or []
         if categories:
-            lines.append("   📌 Категории:")
+            lines.append("   🏅 Виды спорта и категории:")
             for cat in categories:
-                title = cat.get("title") or "—"
+                title = cat.get("category_title") or "—"
+                sport = cat.get("sport_title") or "—"
                 distance_km = cat.get("distance_km")
                 if distance_km is not None:
-                    lines.append(f"      • {title} — {distance_km} км")
+                    lines.append(f"      • {sport} — {title}: {distance_km} км")
                 else:
-                    lines.append(f"      • {title}")
+                    lines.append(f"      • {sport} — {title}")
 
         parts.append("\n".join(lines))
 

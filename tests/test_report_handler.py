@@ -1,13 +1,32 @@
 from datetime import date
+from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session as SyncSession
 
 from app.bot.handlers.cancel import cancel_labeler
 from app.bot.handlers.registration import start_registration
 from app.bot.handlers.report import parse_report_distance
 from app.bot.handlers.states import ReportState
-from app.bot.handlers.stats import start_general_event_report
+from app.bot.handlers.stats import (
+    _aggregate_general_report_rows,
+    _format_general_report_table,
+    _general_event_report_query,
+    start_general_event_report,
+)
+from app.database.models import (
+    Base,
+    Category,
+    Event,
+    EventCategory,
+    EventType,
+    Registration,
+    Report,
+    Sport,
+    User,
+)
 from app.service import get_or_create_user, get_vk_profile
 from app.database.service import (
     event_is_registration_available,
@@ -27,6 +46,116 @@ def test_parse_report_distance_rejects_invalid_format():
     except ValueError:
         return
     raise AssertionError("Expected ValueError for >2 decimal places")
+
+
+def test_general_report_aggregates_category_across_sports():
+    participants = _aggregate_general_report_rows(
+        [
+            (1, "Участник", "Бег", 2, Decimal("12.50")),
+            (1, "Участник", "Велоспорт", 1, Decimal("30.00")),
+            (2, "Без отчётов", None, 0, Decimal("0.00")),
+        ]
+    )
+
+    assert participants[1]["training_count"] == 3
+    assert participants[1]["distance_by_sport"] == {
+        "Бег": Decimal("12.50"),
+        "Велоспорт": Decimal("30.00"),
+    }
+    assert participants[2]["training_count"] == 0
+
+
+def test_general_report_table_shows_each_participant_training_count_and_sports():
+    table = _format_general_report_table(
+        [
+            {
+                "name": "Участник",
+                "training_count": 4,
+                "distance_by_sport": {
+                    "Бег": Decimal("7.00"),
+                    "Велосипед": Decimal("24.50"),
+                },
+            }
+        ]
+    )
+
+    assert table == "1. Участник, 4 трен., Бег: 7.00 км, Велосипед: 24.50 км"
+    assert "Всего тренировок" not in table
+    assert "Километраж по видам спорта:" not in table
+
+
+def test_general_event_report_query_groups_historic_reports_by_sport():
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    with SyncSession(engine) as session:
+        category = Category(title="Профи")
+        running = Sport(title="Бег")
+        swimming = Sport(title="Плавание")
+        event = Event(
+            title="Общее по категории",
+            starts_on=date(2026, 1, 1),
+            ends_on=date(2026, 1, 31),
+            event_type=EventType.DISTANCE,
+        )
+        event.event_categories = [
+            EventCategory(
+                category=category,
+                sport=running,
+                distance_km=Decimal("10.00"),
+            ),
+            EventCategory(
+                category=category,
+                sport=swimming,
+                distance_km=Decimal("2.00"),
+            ),
+        ]
+        user = User(vk_id=1, first_name="А", last_name="Участник")
+        session.add_all([event, user])
+        session.flush()
+
+        current_category = session.query(EventCategory).filter_by(
+            sport_id=swimming.id
+        ).one()
+        registration = Registration(
+            user_id=user.id,
+            event_id=event.id,
+            event_category_id=current_category.id,
+        )
+        session.add(registration)
+        session.flush()
+        session.add_all(
+            [
+                Report(
+                    registration_id=registration.id,
+                    sport_id=running.id,
+                    distance_km=Decimal("8.50"),
+                    peer_id=1,
+                    conversation_message_id=1,
+                ),
+                Report(
+                    registration_id=registration.id,
+                    sport_id=swimming.id,
+                    distance_km=Decimal("1.25"),
+                    peer_id=1,
+                    conversation_message_id=2,
+                ),
+            ]
+        )
+        session.commit()
+
+        rows = session.execute(
+            _general_event_report_query(event.id, category.id)
+        ).all()
+
+    assert {
+        row.sport_title: (row.training_count, row.total_distance)
+        for row in rows
+    } == {
+        "Бег": (1, Decimal("8.50")),
+        "Плавание": (1, Decimal("1.25")),
+    }
+    engine.dispose()
 
 
 def test_event_is_registration_available_requires_open_not_finished_event():

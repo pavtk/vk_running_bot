@@ -20,7 +20,7 @@ async def validate_report_distance_for_registration(
     registration_id: int,
     distance_km: Decimal,
 ) -> tuple[bool, str | None]:
-    """Проверяет, что дистанция отчёта не меньше минимума выбранной категории."""
+    """Проверяет, что отчёт не короче дистанции выбранного сочетания."""
     async with Session() as session:
         registration = await session.get(
             Registration,
@@ -33,7 +33,8 @@ async def validate_report_distance_for_registration(
         minimum_km = registration.event_category.distance_km
         if distance_km < minimum_km:
             return False, (
-                f"⚠️ Для этой категории минимальная дистанция — {minimum_km} км. "
+                f"⚠️ Для выбранного вида спорта и категории минимальная "
+                f"дистанция — {minimum_km} км. "
                 f"Ты отправил {distance_km} км."
             )
 
@@ -84,8 +85,22 @@ async def save_report_for_registration(
     comment: str | None = None,
 ):
     async with Session() as session:
+        sport_id = await session.scalar(
+            select(EventCategory.sport_id)
+            .join(
+                Registration,
+                Registration.event_category_id == EventCategory.id,
+            )
+            .where(Registration.id == registration_id)
+        )
+        if sport_id is None:
+            raise LookupError(
+                f"Registration {registration_id} has no associated sport."
+            )
+
         report = Report(
             registration_id=registration_id,
+            sport_id=sport_id,
             comment=comment,
             distance_km=distance_km,
             peer_id=peer_id,
