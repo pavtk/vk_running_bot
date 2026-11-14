@@ -177,6 +177,7 @@ async def _load_event_categories(event_id: int) -> tuple[str | None, list[dict]]
         return event_obj.title, [
             {
                 "event_category_id": item.id,
+                "category_id": item.category_id,
                 "sport_id": item.sport_id,
                 "sport_title": item.sport.title,
                 "category_title": item.category.title,
@@ -203,7 +204,7 @@ def _categories_for_sport(
 ) -> list[dict]:
     return sorted(
         (item for item in categories if item["sport_id"] == sport_id),
-        key=lambda item: item["category_title"].casefold(),
+        key=lambda item: item["category_id"],
     )
 
 

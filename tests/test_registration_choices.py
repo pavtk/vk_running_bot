@@ -20,26 +20,36 @@ def test_registration_lists_each_event_sport_once():
 def test_registration_categories_are_filtered_by_selected_sport():
     event_categories = [
         {
+            "category_id": 2,
             "sport_id": 2,
             "sport_title": "Плавание",
             "category_title": "Взрослые",
         },
         {
+            "category_id": 1,
             "sport_id": 1,
             "sport_title": "Бег",
-            "category_title": "Юниоры",
+            "category_title": "Новичок",
         },
         {
+            "category_id": 3,
             "sport_id": 1,
             "sport_title": "Бег",
-            "category_title": "Взрослые",
+            "category_title": "Профи",
+        },
+        {
+            "category_id": 2,
+            "sport_id": 1,
+            "sport_title": "Бег",
+            "category_title": "Любитель",
         },
     ]
 
     categories = _categories_for_sport(event_categories, sport_id=1)
 
     assert [category["category_title"] for category in categories] == [
-        "Взрослые",
-        "Юниоры",
+        "Новичок",
+        "Любитель",
+        "Профи",
     ]
     assert all(category["sport_id"] == 1 for category in categories)
