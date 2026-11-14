@@ -15,6 +15,8 @@ from app.database.service import Session
 from app.service import get_or_create_user
 from app.time_utils import local_today
 
+REPORT_TAG_PATTERN = r"#\s*отч[её]т\b"
+
 
 async def validate_report_distance_for_registration(
     registration_id: int,
@@ -42,7 +44,7 @@ async def validate_report_distance_for_registration(
 
 
 def parse_report_distance(raw_text: str) -> str:
-    """Парсит дистанцию из текста вида '#отчет 10,5' и возвращает строку '10.50'."""
+    """Парсит дистанцию из текста вида '#отчёт 10,5' и возвращает строку '10.50'."""
     if raw_text is None:
         raise ValueError("Текст отчёта пустой.")
 
@@ -50,17 +52,21 @@ def parse_report_distance(raw_text: str) -> str:
     if not text:
         raise ValueError("Текст отчёта пустой.")
 
-    match = re.search(r"#\s*отчет\b\s*(.*)", text, flags=re.IGNORECASE)
+    match = re.search(REPORT_TAG_PATTERN + r"\s*(.*)", text, flags=re.IGNORECASE)
     if not match:
-        raise ValueError("В сообщении должен быть тег #отчет.")
+        raise ValueError("В сообщении должен быть тег #отчет или #отчёт.")
 
     tail = match.group(1).strip()
     if not tail:
-        raise ValueError("После #отчет укажи дистанцию в км, например: #отчет 10,5")
+        raise ValueError(
+            "После тега укажи дистанцию в км, например: #отчёт 10,5"
+        )
 
     number_match = re.search(r"\d+(?:[.,]\d+)?", tail)
     if not number_match:
-        raise ValueError("После #отчет укажи дистанцию в км, например: #отчет 10,5")
+        raise ValueError(
+            "После тега укажи дистанцию в км, например: #отчёт 10,5"
+        )
 
     candidate = number_match.group(0).replace(",", ".")
     try:
@@ -147,13 +153,13 @@ async def get_active_registrations_for_user(user_id: int) -> list[Registration]:
     return await get_reportable_registrations_for_user(user_id)
 
 
-@report_labeler.message(RegexRule(r"(?i).*#\s*отчет.*"))
+@report_labeler.message(RegexRule(r"(?i).*#\s*отч[её]т.*"))
 async def handle_report(message: Message):
     """Обрабатывает отчёт с фото и расстоянием. Если пользователь активен в нескольких челленджах, просит выбрать один."""
     photo_attachments = message.get_photo_attachments() or []
     if not photo_attachments:
         await message.answer(
-            "📷 Для отчёта нужно прикрепить фото. Пример: #отчет 10,5",
+            "📷 Для отчёта нужно прикрепить фото. Пример: #отчёт 10,5",
             disable_mentions=True,
         )
         return
@@ -162,10 +168,15 @@ async def handle_report(message: Message):
     try:
         distance_km = parse_report_distance(text)
     except ValueError as exc:
-        await message.answer(f"⚠️ {exc}\nПример: #отчет 10,5", disable_mentions=True)
+        await message.answer(f"⚠️ {exc}\nПример: #отчёт 10,5", disable_mentions=True)
         return
 
-    comment = re.sub(r"#\s*отчет\b", "", text, flags=re.IGNORECASE).strip() or None
+    comment = re.sub(
+        REPORT_TAG_PATTERN,
+        "",
+        text,
+        flags=re.IGNORECASE,
+    ).strip() or None
 
     try:
         user = await get_or_create_user(message.ctx_api, message.from_id)
@@ -233,10 +244,10 @@ async def handle_report(message: Message):
 
 @report_labeler.message(state=ReportState.WAITING_CHALLENGE)
 async def handle_report_challenge_choice(message: Message):
-    """Выбирает активный challenge для отчёта после команды #отчет."""
+    """Выбирает активный challenge для отчёта после команды #отчёт."""
     state = await get_user_state(message.peer_id, message.from_id)
     if state is None or not state.payload:
-        await message.answer("⌛ Сессия истекла. Повторно отправь #отчет.")
+        await message.answer("⌛ Сессия истекла. Повторно отправь #отчёт.")
         return
 
     reg_ids = state.payload.get("registrations") or []
@@ -262,7 +273,7 @@ async def handle_report_challenge_choice(message: Message):
     pending_comment = state.payload.get("comment")
     if pending_distance is None:
         await delete_user_state(message.peer_id, message.from_id)
-        await message.answer("❌ Данные отчёта потерялись. Повтори #отчет.")
+        await message.answer("❌ Данные отчёта потерялись. Повтори #отчёт.")
         return
 
     allowed, validation_error = await validate_report_distance_for_registration(

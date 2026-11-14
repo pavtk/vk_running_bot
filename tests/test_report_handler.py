@@ -40,6 +40,9 @@ def test_parse_report_distance_accepts_comma_and_dot():
     assert parse_report_distance("#отчет 10,5") == "10.50"
     assert parse_report_distance("#отчет 10.5") == "10.50"
     assert parse_report_distance("#отчет 10.50") == "10.50"
+    assert parse_report_distance("#отчёт 10,5") == "10.50"
+    assert parse_report_distance("#ОТЧЁТ 10,5") == "10.50"
+    assert parse_report_distance("#ОТЧЕТ 10,5") == "10.50"
 
 
 def test_parse_report_distance_rejects_invalid_format():
