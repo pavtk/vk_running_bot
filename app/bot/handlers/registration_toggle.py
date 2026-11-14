@@ -1,6 +1,4 @@
 import json
-from datetime import date
-
 from sqlalchemy import select
 from vkbottle import Callback, Keyboard
 from vkbottle.bot import BotLabeler, Message, MessageEvent
@@ -10,6 +8,7 @@ from app.database.models import Event
 from app.database.service import Session
 from app.logger import logger
 from app.service import get_or_create_user
+from app.time_utils import local_today
 
 
 event_management_labeler = BotLabeler()
@@ -53,7 +52,7 @@ async def _show_registration_events(message: Message, registration_open: bool):
     async with Session() as session:
         stmt = select(Event).where(Event.registration_open.is_(not registration_open))
         if registration_open:
-            stmt = stmt.where(Event.ends_on >= date.today())
+            stmt = stmt.where(Event.ends_on >= local_today())
         stmt = stmt.order_by(Event.starts_on.asc(), Event.title.asc())
         events = list((await session.scalars(stmt)).all())
 
@@ -108,7 +107,7 @@ async def _show_sport_change_events(message: Message, sport_change_open: bool):
             Event.sport_change_open.is_(not sport_change_open),
         )
         if sport_change_open:
-            stmt = stmt.where(Event.ends_on >= date.today())
+            stmt = stmt.where(Event.ends_on >= local_today())
         events = list(
             (
                 await session.scalars(
@@ -202,7 +201,7 @@ async def handle_registration_toggle(event: MessageEvent):
             await event.show_snackbar("Мероприятие не найдено.")
             return
         if command == "toggle_registration":
-            if target_open and event_record.ends_on < date.today():
+            if target_open and event_record.ends_on < local_today():
                 await event.show_snackbar(
                     "Нельзя открыть регистрацию на завершившееся мероприятие."
                 )
@@ -214,7 +213,7 @@ async def handle_registration_toggle(event: MessageEvent):
             event_record.registration_open = target_open
             setting_name = "Регистрация"
         else:
-            if target_open and event_record.ends_on < date.today():
+            if target_open and event_record.ends_on < local_today():
                 await event.show_snackbar(
                     "Нельзя открыть смену вида спорта для завершившегося мероприятия."
                 )

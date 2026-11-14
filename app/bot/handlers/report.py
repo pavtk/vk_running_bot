@@ -1,5 +1,4 @@
 import re
-from datetime import date
 from decimal import Decimal, InvalidOperation
 
 from sqlalchemy import select
@@ -14,6 +13,7 @@ from app.bot.state_storage import delete_user_state, get_user_state, set_user_st
 from app.database.models import Event, Registration, Report, EventCategory
 from app.database.service import Session
 from app.service import get_or_create_user
+from app.time_utils import local_today
 
 
 async def validate_report_distance_for_registration(
@@ -135,8 +135,8 @@ async def get_reportable_registrations_for_user(user_id: int) -> list[Registrati
             .join(Registration.event)
             .where(
                 Registration.user_id == user_id,
-                Event.starts_on <= date.today(),
-                Event.ends_on >= date.today(),
+                Event.starts_on <= local_today(),
+                Event.ends_on >= local_today(),
             )
             .order_by(Registration.created_at.desc())
         )

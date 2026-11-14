@@ -8,6 +8,7 @@ from sqlalchemy.orm import selectinload
 
 from app.database.db import async_session_factory as Session
 from app.database.models import User, Event, EventType, EventCategory
+from app.time_utils import local_today
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,7 @@ def event_is_registration_available(
     current_date: date | None = None,
 ) -> bool:
     """Регистрация доступна, если она открыта и событие ещё не закончилось."""
-    today = current_date or date.today()
+    today = current_date or local_today()
     return bool(registration_open) and ends_on >= today and ends_on > starts_on
 
 
@@ -52,12 +53,16 @@ def event_is_report_available(
     current_date: date | None = None,
 ) -> bool:
     """Отчёт можно сдавать только в уже начавшееся событие независимо от статуса регистрации."""
-    today = current_date or date.today()
+    today = current_date or local_today()
     return starts_on <= today <= ends_on
 
 
-async def get_registration_events(session: AsyncSession) -> list[Event]:
+async def get_registration_events(
+    session: AsyncSession,
+    current_date: date | None = None,
+) -> list[Event]:
     """События, на которые можно регистрироваться прямо сейчас."""
+    today = current_date or local_today()
     query = (
         select(Event)
         .options(
@@ -68,7 +73,7 @@ async def get_registration_events(session: AsyncSession) -> list[Event]:
         )
         .where(
             Event.registration_open == True,
-            Event.ends_on >= func.current_date(),
+            Event.ends_on >= today,
         )
         .order_by(Event.starts_on.asc(), Event.title.asc())
     )
@@ -76,8 +81,12 @@ async def get_registration_events(session: AsyncSession) -> list[Event]:
     return list(result.scalars().unique().all())
 
 
-async def get_active_events(session: AsyncSession) -> list[Event]:
+async def get_active_events(
+    session: AsyncSession,
+    current_date: date | None = None,
+) -> list[Event]:
     """Актуальные события: уже начавшиеся или ещё не начавшиеся, но с открытой регистрацией."""
+    today = current_date or local_today()
     query = (
         select(Event)
         .options(
@@ -88,10 +97,10 @@ async def get_active_events(session: AsyncSession) -> list[Event]:
         )
         .where(
             or_(
-                (Event.starts_on <= func.current_date())
-                & (Event.ends_on >= func.current_date()),
+                (Event.starts_on <= today)
+                & (Event.ends_on >= today),
                 (Event.registration_open == True)
-                & (Event.starts_on > func.current_date()),
+                & (Event.starts_on > today),
             )
         )
         .order_by(Event.starts_on.asc(), Event.title.asc())

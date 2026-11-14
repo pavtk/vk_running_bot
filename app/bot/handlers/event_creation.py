@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -17,6 +17,7 @@ from app.database.service import EventType, Session
 from app.bot.utils import _get_state_payload, _text, require_private_message
 from app.bot.labelers import event_creation_labeler
 from app.bot.handlers.states import state_dispenser
+from app.time_utils import local_today
 
 EVENT_TYPE_MAP = {
     "1": EventType.RUNS_PER_WEEK,
@@ -102,7 +103,7 @@ async def process_start_date(message: Message):
     text = _text(message)
     try:
         starts_on = datetime.strptime(text, "%Y-%m-%d").date()
-        if starts_on < date.today():
+        if starts_on < local_today():
             raise ValueError("Дата не может быть в прошлом")
     except ValueError as e:
         error_msg = str(e) if "прошлом" in str(e) else "Неверный формат даты"

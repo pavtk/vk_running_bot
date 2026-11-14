@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import date, datetime
 from decimal import Decimal, ROUND_HALF_UP
 from zoneinfo import ZoneInfo
 
@@ -26,6 +25,7 @@ from app.bot.handlers.stats_utils import group_reports_by_week
 from app.settings import settings
 from app.bot.state_storage import delete_user_state, get_user_state, set_user_state
 from app.bot.utils import require_private_message
+from app.time_utils import local_today
 
 
 MAX_REPORT_MESSAGE_LENGTH = 4000
@@ -375,8 +375,8 @@ async def start_event_stats(message: Message):
             .join(Registration.event)
             .where(
                 Registration.user_id == user.id,
-                Event.starts_on <= date.today(),
-                Event.ends_on >= date.today(),
+                Event.starts_on <= local_today(),
+                Event.ends_on >= local_today(),
             )
             .order_by(Registration.created_at.desc())
         )
@@ -468,8 +468,8 @@ async def send_event_stats(message: Message, reg_id: int):
         )
         return
 
+    through_date = min(local_today(), event_ends_on)
     report_timezone = ZoneInfo(settings.TIMEZONE)
-    through_date = min(datetime.now(report_timezone).date(), event_ends_on)
     weekly = group_reports_by_week(
         rows,
         event_starts_on,

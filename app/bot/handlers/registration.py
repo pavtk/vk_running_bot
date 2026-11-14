@@ -20,6 +20,7 @@ from app.database.models import (
 )
 from app.logger import logger
 from app.bot.utils import require_private_message
+from app.time_utils import local_today
 
 MAX_BUTTONS = 5  # Оставляем ряд под кнопку "Отмена"
 
@@ -633,7 +634,7 @@ async def start_change_sport(message: Message):
                         .where(
                             Registration.user_id == user.id,
                             Event.sport_change_open.is_(True),
-                            Event.ends_on >= date.today(),
+                            Event.ends_on >= local_today(),
                         )
                         .order_by(Event.starts_on, Event.title)
                     )
@@ -726,7 +727,7 @@ async def _show_sport_change_targets(
                     Registration.id == registration_id,
                     Registration.user_id == user.id,
                     Event.sport_change_open.is_(True),
-                    Event.ends_on >= date.today(),
+                    Event.ends_on >= local_today(),
                 )
             )
             if registration is None or registration.event_category is None:
@@ -888,7 +889,7 @@ async def process_confirm_sport_change(
             if (
                 event_record is None
                 or not event_record.sport_change_open
-                or event_record.ends_on < date.today()
+                or event_record.ends_on < local_today()
                 or current is None
             ):
                 await event.show_snackbar(
