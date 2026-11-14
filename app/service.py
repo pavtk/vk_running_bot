@@ -46,8 +46,8 @@ async def get_vk_profile(api, from_id: int) -> dict:
         print("Ошибка получения данных пользователя:", e)
         return {
             'user_vk_id': from_id,
-            'first_name': 'Неизвестный',
-            'last_name': 'Пользователь',
+            'first_name': 'Пользователь',
+            'last_name': str(from_id),
         }
     return {
         'user_vk_id': from_id,
@@ -67,13 +67,13 @@ async def get_or_create_user(api, vk_id: int) -> User:
         user = await get_user_by_vk_id(session, vk_id)
         if user is not None:
             if (user.first_name, user.last_name) == (
-                'Неизвестный',
                 'Пользователь',
+                str(vk_id),
             ):
                 profile = await get_vk_profile(api, vk_id)
                 if (profile['first_name'], profile['last_name']) != (
-                    'Неизвестный',
                     'Пользователь',
+                    str(vk_id),
                 ):
                     user.first_name = profile['first_name']
                     user.last_name = profile['last_name']
