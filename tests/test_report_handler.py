@@ -297,8 +297,8 @@ async def test_get_or_create_user_refreshes_placeholder_profile(monkeypatch):
     user = SimpleNamespace(
         id=1,
         vk_id=123,
-        first_name="Неизвестный",
-        last_name="Пользователь",
+        first_name="Пользователь",
+        last_name="123",
     )
 
     class FakeSession:

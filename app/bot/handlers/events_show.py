@@ -1,14 +1,21 @@
 from vkbottle.bot import Message
 
 from app.bot.labelers import event_show_labeler
-from app.service import render_active_events
+from app.service import get_or_create_user, render_active_events
 from app.bot.utils import require_private_message
+from app.logger import logger
 
 
 @event_show_labeler.message(text="/events")
 async def show_active_events(message: Message):
     if not await require_private_message(message):
         return
+    try:
+        await get_or_create_user(message.ctx_api, message.from_id)
+    except Exception:
+        logger.exception("get_or_create_user failed for /events")
+        await message.answer("❌ Не удалось получить данные пользователя. Попробуй позже.")
+        return    
 
     events = await render_active_events(event_show_labeler, message.from_id)
 
