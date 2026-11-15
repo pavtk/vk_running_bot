@@ -38,6 +38,7 @@ async def show_help(message: Message):
             "• /sport_change_close — запретить смену вида спорта",
             "• /event_report — общий отчёт по мероприятию",
             "• /participants — список участников мероприятия",
+            "• /extra_points — начислить участнику экстра-баллы",
             "• /cancel — отменить текущий сценарий",
         ])
 

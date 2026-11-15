@@ -40,5 +40,11 @@ class ParticipantsState(BaseStateGroup):
     WAITING_EVENT = 'waiting_participants_event'
 
 
+class ExtraPointsState(BaseStateGroup):
+    WAITING_EVENT = "waiting_extra_points_event"
+    WAITING_PARTICIPANT = "waiting_extra_points_participant"
+    WAITING_POINTS = "waiting_extra_points_amount"
+
+
 class ReportState(BaseStateGroup):
     WAITING_CHALLENGE = 'waiting_report_challenge'

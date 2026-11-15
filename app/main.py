@@ -10,6 +10,7 @@ from app.bot.state_storage import UserScopedMessageView
 from app.bot.handlers.cancel import cancel_labeler
 from app.bot.handlers.catalog import catalog_labeler
 from app.bot.handlers.event_creation import event_creation_labeler
+from app.bot.handlers.extra_points import extra_points_labeler
 from app.bot.handlers.events_show import event_show_labeler
 from app.bot.handlers.help import help_labeler
 from app.bot.handlers.registration import registration_labeler
@@ -29,6 +30,7 @@ bot = Bot(
 bot.labeler.load(cancel_labeler)
 bot.labeler.load(catalog_labeler)
 bot.labeler.load(event_creation_labeler)
+bot.labeler.load(extra_points_labeler)
 bot.labeler.load(event_show_labeler)
 bot.labeler.load(help_labeler)
 bot.labeler.load(registration_labeler)

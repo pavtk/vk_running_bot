@@ -271,6 +271,11 @@ class Registration(Base):
         index=True,
         nullable=False,
     )
+    extra_points: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        nullable=False,
+    )
     user: Mapped["User"] = relationship(back_populates="registrations")
     event: Mapped["Event"] = relationship(
         back_populates="registrations",

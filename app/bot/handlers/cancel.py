@@ -3,6 +3,7 @@ from vkbottle.bot import BotLabeler, Message
 from app.bot.handlers.states import (
     CatalogState,
     EventCreateState,
+    ExtraPointsState,
     GeneralReportState,
     ParticipantsState,
     RegistrationState,
@@ -36,6 +37,9 @@ cancel_labeler = BotLabeler()
     GeneralReportState.WAITING_EVENT,
     GeneralReportState.WAITING_CATEGORY,
     ParticipantsState.WAITING_EVENT,
+    ExtraPointsState.WAITING_EVENT,
+    ExtraPointsState.WAITING_PARTICIPANT,
+    ExtraPointsState.WAITING_POINTS,
     ReportState.WAITING_CHALLENGE,
 ])
 async def cancel_event_creation(message: Message):

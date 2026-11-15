@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -13,10 +13,12 @@ from app.bot.handlers.states import ReportState
 from app.bot.handlers.stats import (
     _aggregate_general_report_rows,
     _calculate_general_report_score,
+    _count_fulfilled_weekly_norms,
     _event_participants_query,
     _format_event_participants,
     _format_general_report_table,
     _general_event_report_query,
+    _general_report_weekly_rows_query,
     _split_general_report_messages,
     _sort_general_report_categories,
     start_general_event_report,
@@ -59,9 +61,9 @@ def test_parse_report_distance_rejects_invalid_format():
 def test_general_report_aggregates_category_across_sports():
     participants = _aggregate_general_report_rows(
         [
-            (1, "Участник", "Бег", 2, Decimal("12.50")),
-            (1, "Участник", "Велоспорт", 1, Decimal("30.00")),
-            (2, "Без отчётов", None, 0, Decimal("0.00")),
+            (1, "Участник", "Бег", 2, Decimal("12.50"), 4),
+            (1, "Участник", "Велоспорт", 1, Decimal("30.00"), 4),
+            (2, "Без отчётов", None, 0, Decimal("0.00"), 0),
         ]
     )
 
@@ -71,6 +73,7 @@ def test_general_report_aggregates_category_across_sports():
         "Велоспорт": Decimal("30.00"),
     }
     assert participants[2]["training_count"] == 0
+    assert participants[1]["extra_points"] == 4
 
 
 def test_general_report_categories_are_sorted_by_id_not_title():
@@ -100,16 +103,60 @@ def test_general_report_table_shows_each_participant_training_count_and_sports()
                     "Бег": Decimal("7.00"),
                     "Велосипед": Decimal("24.50"),
                 },
+                "weekly_norm_weeks": 0,
             }
         ]
     )
 
     assert table == (
         "1. Участник, 4 трен., Бег: 7.00 км, Велосипед: 24.50 км, "
-        "19.25 баллов"
+        "19.25 условных км, Балл. за норм.: 0, "
+        "Доп. Баллы: 0, Всего баллов: 0"
     )
     assert "Всего тренировок" not in table
     assert "Километраж по видам спорта:" not in table
+
+
+def test_general_report_counts_fulfilled_weekly_norms():
+    rows = [
+        (1, datetime(2026, 1, 5, 10, tzinfo=timezone.utc)),
+        (1, datetime(2026, 1, 6, 10, tzinfo=timezone.utc)),
+        (1, datetime(2026, 1, 7, 10, tzinfo=timezone.utc)),
+        (1, datetime(2026, 1, 12, 10, tzinfo=timezone.utc)),
+        (1, datetime(2026, 1, 13, 10, tzinfo=timezone.utc)),
+        (2, datetime(2026, 1, 5, 10, tzinfo=timezone.utc)),
+        (2, datetime(2026, 1, 6, 10, tzinfo=timezone.utc)),
+    ]
+
+    fulfilled_norms = _count_fulfilled_weekly_norms(
+        rows,
+        event_starts_on=date(2026, 1, 5),
+        through_date=date(2026, 1, 18),
+        runs_per_week=3,
+        report_timezone=timezone.utc,
+    )
+
+    assert fulfilled_norms == {1: 1, 2: 0}
+
+
+def test_general_report_converts_weekly_norms_to_points():
+    table = _format_general_report_table(
+        [
+            {
+                "name": "Участник",
+                "training_count": 6,
+                "distance_by_sport": {"Бег": Decimal("12.50")},
+                "weekly_norm_weeks": 2,
+                "extra_points": 5,
+            }
+        ]
+    )
+
+    assert table == (
+        "1. Участник, 6 трен., Бег: 12.50 км, "
+        "12.50 условных км, Балл. за норм.: 6, "
+        "Доп. Баллы: 5, Всего баллов: 11"
+    )
 
 
 def test_event_participants_list_is_numbered_with_category_and_sport():
@@ -285,6 +332,7 @@ def test_general_event_report_query_groups_historic_reports_by_sport():
         user = User(vk_id=1, first_name="А", last_name="Участник")
         session.add_all([event, user])
         session.flush()
+        user_id = user.id
 
         current_category = session.query(EventCategory).filter_by(
             sport_id=swimming.id
@@ -293,9 +341,11 @@ def test_general_event_report_query_groups_historic_reports_by_sport():
             user_id=user.id,
             event_id=event.id,
             event_category_id=current_category.id,
+            extra_points=5,
         )
         session.add(registration)
         session.flush()
+        assert registration.extra_points == 5
         session.add_all(
             [
                 Report(
@@ -304,6 +354,7 @@ def test_general_event_report_query_groups_historic_reports_by_sport():
                     distance_km=Decimal("8.50"),
                     peer_id=1,
                     conversation_message_id=1,
+                    created_at=datetime(2026, 1, 5, 10, tzinfo=timezone.utc),
                 ),
                 Report(
                     registration_id=registration.id,
@@ -311,6 +362,7 @@ def test_general_event_report_query_groups_historic_reports_by_sport():
                     distance_km=Decimal("1.25"),
                     peer_id=1,
                     conversation_message_id=2,
+                    created_at=datetime(2026, 1, 6, 10, tzinfo=timezone.utc),
                 ),
             ]
         )
@@ -319,14 +371,23 @@ def test_general_event_report_query_groups_historic_reports_by_sport():
         rows = session.execute(
             _general_event_report_query(event.id, category.id)
         ).all()
+        weekly_rows = session.execute(
+            _general_report_weekly_rows_query(event.id, category.id)
+        ).all()
 
     assert {
-        row.sport_title: (row.training_count, row.total_distance)
+        row.sport_title: (
+            row.training_count,
+            row.total_distance,
+            row.extra_points,
+        )
         for row in rows
     } == {
-        "Бег": (1, Decimal("8.50")),
-        "Плавание": (1, Decimal("1.25")),
+        "Бег": (1, Decimal("8.50"), 5),
+        "Плавание": (1, Decimal("1.25"), 5),
     }
+    assert len(weekly_rows) == 2
+    assert {row.user_id for row in weekly_rows} == {user_id}
     engine.dispose()
 
 

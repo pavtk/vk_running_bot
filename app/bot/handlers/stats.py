@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date, datetime, timezone, tzinfo
 from decimal import Decimal, ROUND_HALF_UP
 from zoneinfo import ZoneInfo
 
@@ -335,16 +336,24 @@ async def process_general_category_choice(message: Message):
 
 
 def _aggregate_general_report_rows(
-    rows: list[tuple[int, str, str | None, int, Decimal]],
+    rows: list[tuple[int, str, str | None, int, Decimal, int]],
 ) -> dict[int, dict]:
     participants: dict[int, dict] = {}
-    for user_id, name, sport_title, training_count, total_distance in rows:
+    for (
+        user_id,
+        name,
+        sport_title,
+        training_count,
+        total_distance,
+        extra_points,
+    ) in rows:
         participant = participants.setdefault(
             user_id,
             {
                 "name": name,
                 "training_count": 0,
                 "distance_by_sport": {},
+                "extra_points": extra_points,
             },
         )
         participant["training_count"] += training_count
@@ -365,15 +374,51 @@ def _format_general_report_table(participants: list[dict]) -> str:
                 participant["distance_by_sport"].items()
             )
         ) or "—"
-        score = _calculate_general_report_score(
+        distance_score = _calculate_general_report_score(
             participant["distance_by_sport"]
         )
+        norm_points = participant.get("weekly_norm_weeks", 0) * 3
+        extra_points = participant.get("extra_points", 0)
+        total_points = norm_points + extra_points
         lines.append(
             f"{index}. {participant['name']}, "
             f"{participant['training_count']} трен., {sports}, "
-            f"{score:.2f} баллов"
+            f"{distance_score:.2f} условных км, "
+            f"Балл. за норм.: {norm_points}, "
+            f"Доп. Баллы: {extra_points}, "
+            f"Всего баллов: {total_points}"
         )
     return "\n".join(lines)
+
+
+def _count_fulfilled_weekly_norms(
+    report_rows: list[tuple[int, datetime]],
+    event_starts_on: date,
+    through_date: date,
+    runs_per_week: int | None,
+    report_timezone: tzinfo,
+) -> dict[int, int]:
+    if not runs_per_week or runs_per_week <= 0 or through_date < event_starts_on:
+        return {}
+
+    reports_by_user: dict[int, list[tuple[datetime, Decimal]]] = {}
+    for user_id, created_at in report_rows:
+        reports_by_user.setdefault(user_id, []).append(
+            (created_at, Decimal("0"))
+        )
+
+    fulfilled_norms = {}
+    for user_id, reports in reports_by_user.items():
+        fulfilled_norms[user_id] = sum(
+            training_count >= runs_per_week
+            for _, _, training_count in group_reports_by_week(
+                reports,
+                event_starts_on,
+                through_date,
+                report_timezone=report_timezone,
+            )
+        )
+    return fulfilled_norms
 
 
 def _calculate_general_report_score(
@@ -435,6 +480,7 @@ def _general_event_report_query(event_id: int, category_id: int):
             User.id.label("user_id"),
             User.first_name,
             User.last_name,
+            Registration.extra_points.label("extra_points"),
             Sport.title.label("sport_title"),
             func.count(Report.id).label("training_count"),
             func.coalesce(func.sum(Report.distance_km), 0).label("total_distance"),
@@ -452,6 +498,7 @@ def _general_event_report_query(event_id: int, category_id: int):
             User.id,
             User.first_name,
             User.last_name,
+            Registration.extra_points,
             Sport.title,
         )
         .order_by(
@@ -459,6 +506,19 @@ def _general_event_report_query(event_id: int, category_id: int):
             func.coalesce(func.sum(Report.distance_km), 0).desc(),
             User.last_name.asc(),
             User.first_name.asc(),
+        )
+    )
+
+
+def _general_report_weekly_rows_query(event_id: int, category_id: int):
+    return (
+        select(Registration.user_id, Report.created_at)
+        .select_from(Registration)
+        .join(EventCategory, EventCategory.id == Registration.event_category_id)
+        .join(Report, Report.registration_id == Registration.id)
+        .where(
+            Registration.event_id == event_id,
+            EventCategory.category_id == category_id,
         )
     )
 
@@ -478,6 +538,11 @@ async def _render_general_event_report(message: Message, event_id: int, category
             )
             .limit(1)
         )
+        weekly_report_rows = (
+            await session.execute(
+                _general_report_weekly_rows_query(event_id, category_id)
+            )
+        ).all()
 
         rows = (
             await session.execute(
@@ -489,6 +554,18 @@ async def _render_general_event_report(message: Message, event_id: int, category
         await message.answer("❌ Данные события или категории не найдены.")
         return
 
+    event_starts_on = event.starts_on
+    event_ends_on = event.ends_on
+    runs_per_week = event.runs_per_week
+    report_timezone = ZoneInfo(settings.TIMEZONE)
+    fulfilled_weekly_norms = _count_fulfilled_weekly_norms(
+        weekly_report_rows,
+        event_starts_on,
+        min(local_today(), event_ends_on),
+        runs_per_week,
+        report_timezone,
+    )
+
     participants = _aggregate_general_report_rows(
         [
             (
@@ -497,10 +574,17 @@ async def _render_general_event_report(message: Message, event_id: int, category
                 row.sport_title,
                 row.training_count or 0,
                 row.total_distance or Decimal("0.00"),
+                row.extra_points or 0,
             )
             for row in rows
         ]
     )
+    for participant_id, participant in participants.items():
+        fulfilled_weeks = fulfilled_weekly_norms.get(
+            participant_id,
+            0,
+        )
+        participant["weekly_norm_weeks"] = fulfilled_weeks
 
     ordered_participants = sorted(
         participants.values(),
