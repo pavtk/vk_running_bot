@@ -82,7 +82,7 @@ docker-compose.yml        # PostgreSQL для локальной разрабо�
 ### 1. Склонируйте проект и создайте виртуальное окружение
 
 ```bash
-git clone <адрес_репозитория> vk-running-bot
+git clone https://github.com/pavtk/vk_running_bot.git vk-running-bot
 cd vk-running-bot
 
 python3.11 -m venv .venv
@@ -170,6 +170,7 @@ python -m pytest
 | `/sport_change_open` | Разрешает участникам сменить вид спорта |
 | `/sport_change_close` | Запрещает смену вида спорта |
 | `/event_report` | Формирует отчёт по событию и категории, независимо от вида спорта |
+| `/participants` | Показывает список участников выбранного мероприятия |
 | `/cancel` | Отменяет текущий диалоговый сценарий |
 
 <a id="workflow"></a>

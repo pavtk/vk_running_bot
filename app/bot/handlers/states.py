@@ -36,5 +36,9 @@ class GeneralReportState(BaseStateGroup):
     WAITING_CATEGORY = 'waiting_general_report_category'
 
 
+class ParticipantsState(BaseStateGroup):
+    WAITING_EVENT = 'waiting_participants_event'
+
+
 class ReportState(BaseStateGroup):
     WAITING_CHALLENGE = 'waiting_report_challenge'

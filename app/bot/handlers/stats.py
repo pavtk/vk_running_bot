@@ -8,7 +8,12 @@ from sqlalchemy.orm import selectinload
 from vkbottle.bot import Message
 from vkbottle.tools.formatting import Formatter
 
-from app.bot.handlers.states import GeneralReportState, StatsState, state_dispenser
+from app.bot.handlers.states import (
+    GeneralReportState,
+    ParticipantsState,
+    StatsState,
+    state_dispenser,
+)
 from app.bot.labelers import stats_labeler
 from app.database.models import (
     Category,
@@ -26,6 +31,7 @@ from app.settings import settings
 from app.bot.state_storage import delete_user_state, get_user_state, set_user_state
 from app.bot.utils import require_private_message
 from app.time_utils import local_today
+from app.logger import logger
 
 
 MAX_REPORT_MESSAGE_LENGTH = 4000
@@ -35,6 +41,168 @@ SPORT_SCORE_FACTORS = {
     "лыжи": Decimal("0.8"),
     "скандинавская ходьба": Decimal("1.33"),
 }
+
+
+@stats_labeler.message(text="/participants")
+async def start_event_participants_list(message: Message):
+    if not await require_private_message(message):
+        return
+
+    try:
+        user = await get_or_create_user(message.ctx_api, message.from_id)
+    except Exception:
+        logger.exception("Failed to get user for participants list")
+        await message.answer("❌ Не удалось получить данные пользователя. Попробуй позже.")
+        return
+
+    if not user.is_admin:
+        await message.answer("❌ Эта команда доступна только администраторам.")
+        return
+
+    try:
+        async with Session() as session:
+            events = list(
+                (
+                    await session.scalars(
+                        select(Event)
+                        .join(Registration, Registration.event_id == Event.id)
+                        .distinct()
+                        .order_by(Event.starts_on.desc(), Event.title.asc())
+                    )
+                ).unique().all()
+            )
+    except Exception:
+        logger.exception("Failed to load events for participants list")
+        await message.answer("❌ Не удалось загрузить список мероприятий.")
+        return
+
+    if not events:
+        await message.answer("📭 Пока нет зарегистрированных участников.")
+        return
+
+    if len(events) == 1:
+        await _send_event_participants(message, events[0].id)
+        return
+
+    lines = [
+        f"{index}. {event.title}"
+        for index, event in enumerate(events, 1)
+    ]
+    await state_dispenser.set(
+        message.peer_id,
+        ParticipantsState.WAITING_EVENT,
+        event_ids=[event.id for event in events],
+        user_id=user.id,
+    )
+    event_choices = _split_general_report_messages(
+        "👥 Выбери мероприятие для списка участников:",
+        "\n".join(lines),
+    )
+    for choice_part in event_choices:
+        await message.answer(choice_part, disable_mentions=True)
+
+
+@stats_labeler.message(state=ParticipantsState.WAITING_EVENT)
+async def process_event_participants_choice(message: Message):
+    state = await state_dispenser.get(message.peer_id)
+    if state is None or not state.payload:
+        await message.answer("⌛ Сессия истекла. Повторно введи /participants.")
+        return
+
+    try:
+        user = await get_or_create_user(message.ctx_api, message.from_id)
+    except Exception:
+        logger.exception("Failed to verify admin for participants list")
+        await message.answer("❌ Не удалось проверить права пользователя.")
+        return
+
+    if not user.is_admin or user.id != state.payload.get("user_id"):
+        await state_dispenser.delete(message.peer_id)
+        await message.answer("❌ Эта команда доступна только инициировавшему её администратору.")
+        return
+
+    event_ids = state.payload.get("event_ids") or []
+    try:
+        choice = int((message.text or "").strip())
+    except ValueError:
+        await message.answer("⚠️ Введи номер мероприятия из списка, например: 1")
+        return
+
+    if choice < 1 or choice > len(event_ids):
+        await message.answer(f"⚠️ Введи число от 1 до {len(event_ids)}.")
+        return
+
+    await _send_event_participants(message, event_ids[choice - 1])
+
+
+def _format_event_participants(rows: list[tuple[str, str, str]]) -> str:
+    if not rows:
+        return "В этом мероприятии пока нет зарегистрированных участников."
+
+    return "\n".join(
+        f"{index}. {name}, {category}, {sport}"
+        for index, (name, category, sport) in enumerate(rows, start=1)
+    )
+
+
+def _sort_general_report_categories(categories_by_id: dict[int, Category]):
+    return sorted(categories_by_id.items(), key=lambda item: item[0])
+
+
+async def _send_event_participants(message: Message, event_id: int):
+    try:
+        async with Session() as session:
+            event = await session.get(Event, event_id)
+            rows = (
+                await session.execute(
+                    _event_participants_query(event_id)
+                )
+            ).all()
+    except Exception:
+        logger.exception("Failed to load participants for event %s", event_id)
+        await message.answer("❌ Не удалось загрузить участников мероприятия.")
+        return
+
+    if event is None:
+        await message.answer("❌ Мероприятие не найдено.")
+        return
+
+    participant_rows = [
+        (
+            f"{first_name} {last_name}".strip(),
+            category_title,
+            sport_title,
+        )
+        for first_name, last_name, category_title, sport_title in rows
+    ]
+    report_body = _format_event_participants(participant_rows)
+    header = f"👥 Участники мероприятия: {event.title}"
+    await state_dispenser.delete(message.peer_id)
+    for report_part in _split_general_report_messages(header, report_body):
+        await message.answer(report_part, disable_mentions=True)
+
+
+def _event_participants_query(event_id: int):
+    return (
+        select(
+            User.first_name,
+            User.last_name,
+            Category.title,
+            Sport.title,
+        )
+        .select_from(Registration)
+        .join(User, User.id == Registration.user_id)
+        .join(EventCategory, EventCategory.id == Registration.event_category_id)
+        .join(Category, Category.id == EventCategory.category_id)
+        .join(Sport, Sport.id == EventCategory.sport_id)
+        .where(Registration.event_id == event_id)
+        .order_by(
+            EventCategory.category_id,
+            Sport.title,
+            User.last_name,
+            User.first_name,
+        )
+    )
 
 
 @stats_labeler.message(text="/event_report")
@@ -96,10 +264,7 @@ async def _ask_category_for_general_report(message: Message, event_id: int):
         event_category.category_id: event_category.category
         for event_category in event.event_categories
     }
-    categories = sorted(
-        categories_by_id.items(),
-        key=lambda item: item[1].title.casefold(),
-    )
+    categories = _sort_general_report_categories(categories_by_id)
     if not categories:
         await message.answer("📭 У этого события нет категорий для отчёта.")
         return

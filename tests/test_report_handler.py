@@ -13,9 +13,12 @@ from app.bot.handlers.states import ReportState
 from app.bot.handlers.stats import (
     _aggregate_general_report_rows,
     _calculate_general_report_score,
+    _event_participants_query,
+    _format_event_participants,
     _format_general_report_table,
     _general_event_report_query,
     _split_general_report_messages,
+    _sort_general_report_categories,
     start_general_event_report,
 )
 from app.database.models import (
@@ -70,6 +73,23 @@ def test_general_report_aggregates_category_across_sports():
     assert participants[2]["training_count"] == 0
 
 
+def test_general_report_categories_are_sorted_by_id_not_title():
+    categories = {
+        3: SimpleNamespace(title="Новичок"),
+        1: SimpleNamespace(title="Профи"),
+        2: SimpleNamespace(title="Любитель"),
+    }
+
+    assert [
+        (category_id, category.title)
+        for category_id, category in _sort_general_report_categories(categories)
+    ] == [
+        (1, "Профи"),
+        (2, "Любитель"),
+        (3, "Новичок"),
+    ]
+
+
 def test_general_report_table_shows_each_participant_training_count_and_sports():
     table = _format_general_report_table(
         [
@@ -90,6 +110,89 @@ def test_general_report_table_shows_each_participant_training_count_and_sports()
     )
     assert "Всего тренировок" not in table
     assert "Километраж по видам спорта:" not in table
+
+
+def test_event_participants_list_is_numbered_with_category_and_sport():
+    assert _format_event_participants(
+        [
+            ("Ада Лавлейс", "Профи", "Бег"),
+            ("Павел Ткаченко", "Любитель", "Велосипед"),
+        ]
+    ) == (
+        "1. Ада Лавлейс, Профи, Бег\n"
+        "2. Павел Ткаченко, Любитель, Велосипед"
+    )
+
+
+def test_event_participants_list_shows_empty_event_message():
+    assert "нет зарегистрированных участников" in _format_event_participants([])
+
+
+def test_event_participants_query_returns_registrants_in_category_order():
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    with SyncSession(engine) as session:
+        beginner = Category(title="Новичок")
+        pro = Category(title="Профи")
+        running = Sport(title="Бег")
+        event = Event(
+            title="Участники",
+            starts_on=date(2026, 1, 1),
+            ends_on=date(2026, 1, 31),
+            event_type=EventType.DISTANCE,
+        )
+        event.event_categories = [
+            EventCategory(
+                category=beginner,
+                sport=running,
+                distance_km=Decimal("5.00"),
+            ),
+            EventCategory(
+                category=pro,
+                sport=running,
+                distance_km=Decimal("10.00"),
+            ),
+        ]
+        session.add_all(
+            [
+                event,
+                User(vk_id=1, first_name="Павел", last_name="Ткаченко"),
+                User(vk_id=2, first_name="Ада", last_name="Лавлейс"),
+            ]
+        )
+        session.flush()
+        beginner_ec = session.query(EventCategory).filter_by(
+            category_id=beginner.id
+        ).one()
+        pro_ec = session.query(EventCategory).filter_by(
+            category_id=pro.id
+        ).one()
+        pavel = session.query(User).filter_by(vk_id=1).one()
+        ada = session.query(User).filter_by(vk_id=2).one()
+        session.add_all(
+            [
+                Registration(
+                    user_id=pavel.id,
+                    event_id=event.id,
+                    event_category_id=pro_ec.id,
+                ),
+                Registration(
+                    user_id=ada.id,
+                    event_id=event.id,
+                    event_category_id=beginner_ec.id,
+                ),
+            ]
+        )
+        session.flush()
+
+        rows = session.execute(_event_participants_query(event.id)).all()
+
+    assert rows == [
+        ("Ада", "Лавлейс", "Новичок", "Бег"),
+        ("Павел", "Ткаченко", "Профи", "Бег"),
+    ]
+    engine.dispose()
 
 
 def test_general_report_score_uses_sport_factors_and_rounds_half_up():

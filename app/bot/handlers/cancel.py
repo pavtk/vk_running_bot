@@ -4,6 +4,7 @@ from app.bot.handlers.states import (
     CatalogState,
     EventCreateState,
     GeneralReportState,
+    ParticipantsState,
     RegistrationState,
     ReportState,
     StatsState,
@@ -34,6 +35,7 @@ cancel_labeler = BotLabeler()
     StatsState.WAITING_EVENT,
     GeneralReportState.WAITING_EVENT,
     GeneralReportState.WAITING_CATEGORY,
+    ParticipantsState.WAITING_EVENT,
     ReportState.WAITING_CHALLENGE,
 ])
 async def cancel_event_creation(message: Message):
